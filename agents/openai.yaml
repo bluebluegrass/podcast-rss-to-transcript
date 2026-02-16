@@ -1,0 +1,4 @@
+interface:
+  display_name: "Podcast RSS Transcribe"
+  short_description: "Select and transcribe podcast episodes from RSS feeds"
+  default_prompt: "Use $podcast-rss-transcribe to pick one podcast episode from an RSS feed and produce a transcript."
