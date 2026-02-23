@@ -1,70 +1,80 @@
-# podcast-rss-transcribe
+# Podcast RSS to Transcript
 
-Resolve podcast episodes from RSS/Atom feeds, download a specific episode audio file, and hand it to transcription.
+Turn any podcast RSS feed into a clean transcript with a repeatable workflow.
 
-## What this skill includes
+This Codex skill helps you:
+- Find episodes from RSS/Atom feeds
+- Select exactly one episode by title, guid, index, or latest
+- Download episode audio locally
+- Hand off to transcription (including optional speaker diarization)
 
-- `SKILL.md`: Codex skill definition and workflow
-- `agents/openai.yaml`: UI metadata for Codex
-- `scripts/podcast_rss_episode.py`: episode listing/resolving/downloading CLI
+## Why this is useful
+
+Most podcast workflows break on episode selection and file handling. This skill gives you a reliable, scriptable path from feed URL to transcript file.
+
+## What's included
+
+- `SKILL.md` - Skill behavior and workflow
+- `agents/openai.yaml` - Codex UI metadata
+- `scripts/podcast_rss_episode.py` - RSS listing, episode resolution, and download CLI
 
 ## Requirements
 
 - Python 3.9+
-- Network access for RSS and audio download
-- `OPENAI_API_KEY` (only required when you run transcription)
-- Optional: `ffmpeg` if you want speed changes (e.g., 2x/3x) before transcription
+- Network access (RSS + audio download + transcription API)
+- `OPENAI_API_KEY` for transcription
+- Optional: `ffmpeg` for speed adjustment before transcription
 
-## Install for local use
+## Quick start
 
-Option 1 (copy folder):
+1. Clone this repo:
+
+```bash
+git clone https://github.com/bluebluegrass/podcast-rss-to-transcript.git
+cd podcast-rss-to-transcript
+```
+
+2. Make skill available to Codex:
 
 ```bash
 mkdir -p "$HOME/.codex/skills"
-cp -R podcast-rss-transcribe "$HOME/.codex/skills/"
+ln -s "$(pwd)" "$HOME/.codex/skills/podcast-rss-transcribe"
 ```
 
-Option 2 (symlink during development):
+3. Ensure transcription skill exists and set API key:
 
 ```bash
-mkdir -p "$HOME/.codex/skills"
-ln -s "$(pwd)/podcast-rss-transcribe" "$HOME/.codex/skills/podcast-rss-transcribe"
+export OPENAI_API_KEY="your_key_here"
 ```
 
-## Publish for others
-
-1. Push this folder to a GitHub repository.
-2. Share the repo URL and the skill path (if not at repo root).
-3. Other users can install it using Codex skill install flow from GitHub repo source.
-
-## CLI usage
+## End-to-end example
 
 List episodes:
 
 ```bash
 python3 scripts/podcast_rss_episode.py list \
   --feed-url "https://example.com/podcast.rss" \
-  --limit 25
+  --limit 30
 ```
 
-Resolve one episode:
+Resolve one episode by title:
 
 ```bash
 python3 scripts/podcast_rss_episode.py resolve \
   --feed-url "https://example.com/podcast.rss" \
-  --title "Episode title"
+  --title "Episode title text"
 ```
 
-Download one episode by guid:
+Download the resolved episode:
 
 ```bash
 python3 scripts/podcast_rss_episode.py download \
   --feed-url "https://example.com/podcast.rss" \
-  --episode-guid "episode-guid" \
+  --episode-guid "episode-guid-here" \
   --out-dir "output/podcast-audio"
 ```
 
-## Transcription handoff example
+Transcribe:
 
 ```bash
 python3 "$HOME/.codex/skills/transcribe/scripts/transcribe_diarize.py" \
@@ -73,8 +83,24 @@ python3 "$HOME/.codex/skills/transcribe/scripts/transcribe_diarize.py" \
   --out "output/transcribe/episode.md"
 ```
 
-## Notes
+## Optional: speaker labels
 
-- Prefer `--episode-guid` for stable matching.
-- If title matching is ambiguous, use `--episode-index` or `--episode-guid`.
-- For best transcript quality, avoid very high speed-up factors.
+Use diarization when you need speaker tags:
+
+```bash
+python3 "$HOME/.codex/skills/transcribe/scripts/transcribe_diarize.py" \
+  "output/podcast-audio/episode.mp3" \
+  --model gpt-4o-transcribe-diarize \
+  --response-format diarized_json \
+  --out "output/transcribe/episode.diarized.json"
+```
+
+## Tips for best results
+
+- Prefer `--episode-guid` for stable selection.
+- If title search matches multiple episodes, use guid or index to disambiguate.
+- Avoid aggressive speed-up (3x+) before transcription unless necessary.
+
+## License
+
+MIT (see `LICENSE`)
