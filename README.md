@@ -12,6 +12,20 @@ This Codex skill helps you:
 
 Most podcast workflows break on episode selection and file handling. This skill gives you a reliable, scriptable path from feed URL to transcript file.
 
+## Visual walkthrough
+
+### 1) End-to-end workflow
+
+![Workflow overview](assets/readme/workflow-overview.svg)
+
+### 2) Episode selection and disambiguation
+
+![Episode selection flow](assets/readme/episode-selection-flow.svg)
+
+### 3) Output mode options
+
+![Output modes](assets/readme/output-modes.svg)
+
 ## What's included
 
 - `SKILL.md` - Skill behavior and workflow

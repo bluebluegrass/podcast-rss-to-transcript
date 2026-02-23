@@ -1,0 +1,31 @@
+<svg width="1200" height="520" viewBox="0 0 1200 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Episode selection flow">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ecfeff"/>
+      <stop offset="100%" stop-color="#f8fafc"/>
+    </linearGradient>
+    <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#0f766e"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="520" fill="url(#bg2)"/>
+  <text x="60" y="60" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#134e4a">Episode Selection Flow</text>
+  <text x="60" y="92" font-family="Arial, sans-serif" font-size="18" fill="#115e59">Use guid, index, or title and safely disambiguate</text>
+
+  <rect x="60" y="140" width="500" height="120" rx="16" fill="#ffffff" stroke="#2dd4bf" stroke-width="2"/>
+  <text x="86" y="178" font-family="Courier New, monospace" font-size="18" fill="#0f172a">python3 scripts/podcast_rss_episode.py list ...</text>
+  <text x="86" y="210" font-family="Arial, sans-serif" font-size="16" fill="#334155">Returns episode table or JSON with index, title, guid, audio_url</text>
+
+  <rect x="640" y="140" width="500" height="120" rx="16" fill="#ffffff" stroke="#2dd4bf" stroke-width="2"/>
+  <text x="666" y="178" font-family="Courier New, monospace" font-size="18" fill="#0f172a">python3 ... resolve --title "..."</text>
+  <text x="666" y="210" font-family="Arial, sans-serif" font-size="16" fill="#334155">If ambiguous, switch to --episode-guid or --episode-index</text>
+
+  <line x1="560" y1="200" x2="628" y2="200" stroke="#0f766e" stroke-width="3" marker-end="url(#arr2)"/>
+
+  <rect x="260" y="320" width="680" height="140" rx="16" fill="#ffffff" stroke="#2dd4bf" stroke-width="2"/>
+  <text x="286" y="358" font-family="Courier New, monospace" font-size="18" fill="#0f172a">python3 ... download --episode-guid "GUID" --out-dir output/podcast-audio</text>
+  <text x="286" y="392" font-family="Arial, sans-serif" font-size="16" fill="#334155">Outputs one local audio file, ready for text transcription or speaker diarization</text>
+
+  <line x1="890" y1="260" x2="890" y2="308" stroke="#0f766e" stroke-width="3" marker-end="url(#arr2)"/>
+</svg>

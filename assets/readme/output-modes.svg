@@ -1,0 +1,31 @@
+<svg width="1200" height="520" viewBox="0 0 1200 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Transcript output modes">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fff7ed"/>
+      <stop offset="100%" stop-color="#fefce8"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="520" fill="url(#bg3)"/>
+  <text x="60" y="60" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#7c2d12">Choose Your Output Mode</text>
+  <text x="60" y="92" font-family="Arial, sans-serif" font-size="18" fill="#9a3412">Fast text transcript or speaker-aware diarization JSON</text>
+
+  <rect x="60" y="140" width="520" height="320" rx="18" fill="#ffffff" stroke="#fb923c" stroke-width="2"/>
+  <text x="88" y="182" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#7c2d12">Mode A: Plain Text</text>
+  <text x="88" y="214" font-family="Courier New, monospace" font-size="16" fill="#0f172a">--response-format text</text>
+  <text x="88" y="248" font-family="Arial, sans-serif" font-size="16" fill="#334155">Best for summaries, notes, and SEO drafts.</text>
+  <rect x="88" y="278" width="464" height="154" rx="10" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="106" y="308" font-family="Courier New, monospace" font-size="14" fill="#0f172a">I think there is a difference between...</text>
+  <text x="106" y="334" font-family="Courier New, monospace" font-size="14" fill="#0f172a">being able to make a career and...</text>
+  <text x="106" y="360" font-family="Courier New, monospace" font-size="14" fill="#0f172a">being able to make a living.</text>
+
+  <rect x="620" y="140" width="520" height="320" rx="18" fill="#ffffff" stroke="#fb923c" stroke-width="2"/>
+  <text x="648" y="182" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#7c2d12">Mode B: Diarized JSON</text>
+  <text x="648" y="214" font-family="Courier New, monospace" font-size="16" fill="#0f172a">--model gpt-4o-transcribe-diarize</text>
+  <text x="648" y="238" font-family="Courier New, monospace" font-size="16" fill="#0f172a">--response-format diarized_json</text>
+  <text x="648" y="270" font-family="Arial, sans-serif" font-size="16" fill="#334155">Best for speaker tags: Speaker A/B, host/guest mapping.</text>
+  <rect x="648" y="298" width="464" height="134" rx="10" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="666" y="328" font-family="Courier New, monospace" font-size="14" fill="#0f172a">{ "speaker": "A", "text": "..." }</text>
+  <text x="666" y="354" font-family="Courier New, monospace" font-size="14" fill="#0f172a">{ "speaker": "B", "text": "..." }</text>
+  <text x="666" y="380" font-family="Courier New, monospace" font-size="14" fill="#0f172a">{ "speaker": "A", "text": "..." }</text>
+</svg>
