@@ -115,6 +115,16 @@ python3 "$HOME/.codex/skills/transcribe/scripts/transcribe_diarize.py" \
 - If title search matches multiple episodes, use guid or index to disambiguate.
 - Avoid aggressive speed-up (3x+) before transcription unless necessary.
 
+
+## Web app mode
+
+The repository also includes a simple web app in `webapp/`.
+
+- Mode 1: input RSS feed URL + episode title
+- Mode 2: input podcast title + episode title (backend feed discovery via iTunes search + cache)
+
+See `webapp/README.md` for run instructions and API details.
+
 ## License
 
 MIT (see `LICENSE`)
