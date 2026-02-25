@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Podcast RSS to Transcript</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="panel hero">
+        <h1>Podcast RSS to Transcript</h1>
+        <p>Paste an RSS feed and episode title. Get transcript text directly in the browser.</p>
+      </section>
+
+      <section class="panel form-panel">
+        <form id="transcribeForm">
+          <label for="feedUrl">RSS Feed URL</label>
+          <input id="feedUrl" name="feedUrl" type="url" required placeholder="https://feeds.example.com/podcast.rss" />
+
+          <label for="episodeTitle">Episode Title</label>
+          <input id="episodeTitle" name="episodeTitle" type="text" required placeholder="9. How to Be a Doctor in the Arctic Circle" />
+
+          <label class="check-row" for="includeSpeakers">
+            <input id="includeSpeakers" name="includeSpeakers" type="checkbox" />
+            <span>Include speaker detection (slower)</span>
+          </label>
+
+          <label class="check-row" for="formatReadable">
+            <input id="formatReadable" name="formatReadable" type="checkbox" checked />
+            <span>Make transcript human-readable (recommended)</span>
+          </label>
+
+          <div class="actions">
+            <button id="submitBtn" type="submit">Generate Transcript</button>
+          </div>
+        </form>
+
+        <p id="status" class="status" aria-live="polite"></p>
+      </section>
+
+      <section id="resultSection" class="panel result hidden">
+        <div class="result-head">
+          <h2 id="resultTitle">Transcript</h2>
+          <div class="result-actions">
+            <button id="copyBtn" type="button">Copy everything</button>
+            <button id="downloadBtn" type="button">Download .md</button>
+          </div>
+        </div>
+
+        <p id="meta" class="meta"></p>
+        <textarea id="transcriptOutput" readonly></textarea>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
