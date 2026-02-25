@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -41,7 +42,7 @@ class TranscribeResponse(BaseModel):
     suggested_filename: str
 
 
-app = FastAPI(title="Podcast RSS Transcript App", version="1.1.0")
+app = FastAPI(title="Podcast RSS Transcript App", version="1.2.0")
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
@@ -151,7 +152,6 @@ def _format_transcript_readable(transcript_text: str, include_speakers: bool) ->
     if not formatted:
         return transcript_text, False
 
-    # Guardrail: if formatter output is suspiciously short, keep original to avoid accidental summarization.
     if len(formatted) < max(120, int(len(text) * 0.35)):
         return transcript_text, False
 
@@ -199,6 +199,39 @@ def _download_episode(feed_url: str, guid: str, audio_out: Path) -> None:
     )
 
 
+def _normalize_audio_for_transcription(input_audio: Path, output_audio: Path) -> Path:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return input_audio
+
+    # Normalize container/codec so upstream transcription API gets a predictable audio stream.
+    _run_command(
+        [
+            ffmpeg,
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(input_audio),
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            "64k",
+            str(output_audio),
+        ],
+        timeout_seconds=900,
+    )
+
+    if not output_audio.exists() or output_audio.stat().st_size == 0:
+        raise RuntimeError("Audio normalization failed: generated file is empty")
+
+    return output_audio
+
+
 def _transcribe_audio(audio_path: Path, out_path: Path, include_speakers: bool) -> str:
     cmd = [
         "python3",
@@ -212,8 +245,34 @@ def _transcribe_audio(audio_path: Path, out_path: Path, include_speakers: bool) 
     if include_speakers:
         cmd.extend(["--model", "gpt-4o-transcribe-diarize"])
 
-    _run_command(cmd, timeout_seconds=2400)
+    try:
+        _run_command(cmd, timeout_seconds=2400)
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "Audio file might be corrupted or unsupported" in msg:
+            raise RuntimeError(
+                "Downloaded audio could not be decoded by transcription API. "
+                "Try another episode/feed, or disable speaker detection."
+            ) from exc
+        raise
+
     return out_path.read_text(encoding="utf-8")
+
+
+def _to_user_error_message(exc: Exception) -> str:
+    raw = str(exc).strip()
+    if not raw:
+        return "Unexpected error while processing transcript request"
+
+    if "Audio file might be corrupted or unsupported" in raw:
+        return "Downloaded audio could not be decoded by transcription API. Try another episode or feed URL."
+
+    if "Traceback" in raw:
+        lines = [line.strip() for line in raw.splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
+
+    return raw
 
 
 @app.get("/api/health")
@@ -224,6 +283,7 @@ def health() -> dict:
         "transcribe_cli_exists": TRANSCRIBE_CLI.exists(),
         "openai_key_set": bool(os.getenv("OPENAI_API_KEY")),
         "readability_model": READABILITY_MODEL,
+        "ffmpeg_exists": bool(shutil.which("ffmpeg")),
     }
 
 
@@ -246,11 +306,16 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
         if not guid:
             raise RuntimeError("Episode GUID missing from resolve output")
 
-        audio_path = job_dir / "episode.mp3"
-        _download_episode(req.feed_url, guid, audio_path)
+        downloaded_audio = job_dir / "episode.raw"
+        _download_episode(req.feed_url, guid, downloaded_audio)
+
+        normalized_audio = _normalize_audio_for_transcription(
+            downloaded_audio,
+            job_dir / "episode.normalized.mp3",
+        )
 
         raw_transcript_path = job_dir / ("transcript.diarized.json" if req.include_speakers else "transcript.txt")
-        raw_content = _transcribe_audio(audio_path, raw_transcript_path, req.include_speakers)
+        raw_content = _transcribe_audio(normalized_audio, raw_transcript_path, req.include_speakers)
 
         transcript_text = _format_diarized_json(raw_content) if req.include_speakers else raw_content.strip()
         readability_formatted = False
@@ -287,7 +352,7 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Processing timed out")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=_to_user_error_message(exc))
 
 
 @app.get("/")
