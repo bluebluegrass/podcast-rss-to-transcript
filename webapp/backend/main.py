@@ -282,6 +282,15 @@ def _to_user_error_message(exc: Exception) -> str:
     if "Audio file might be corrupted or unsupported" in raw:
         return "Downloaded audio could not be decoded by transcription API. Try another episode or feed URL."
 
+    if "No podcast feed candidates found" in raw:
+        return "Could not find a podcast feed for that podcast title. Try a more specific title or provide RSS URL directly."
+
+    if "Found podcast feeds but no matching episode title was found" in raw:
+        return "Podcast was found, but the episode title did not match. Try exact episode title text or provide RSS URL directly."
+
+    if "Provide exactly one of feed_url or podcast_title" in raw:
+        return "Provide either RSS feed URL or podcast title (not both)."
+
     if "Traceback" in raw:
         lines = [line.strip() for line in raw.splitlines() if line.strip()]
         if lines:
