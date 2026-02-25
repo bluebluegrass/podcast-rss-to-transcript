@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
+from .feed_discovery import discover_feed_for_episode
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEBAPP_ROOT = Path(__file__).resolve().parents[1]
@@ -297,6 +299,7 @@ def health() -> dict:
         "openai_key_set": bool(os.getenv("OPENAI_API_KEY")),
         "readability_model": READABILITY_MODEL,
         "ffmpeg_exists": bool(shutil.which("ffmpeg")),
+        "discovery_provider": "itunes_search_with_cache",
     }
 
 
@@ -315,14 +318,23 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
 
     try:
         warnings: list[str] = []
-        if not req.feed_url:
-            raise RuntimeError("podcast_title mode is not enabled yet in this build")
 
-        resolved_feed_url = req.feed_url
-        podcast_title_resolved = ""
-        discovery_method = "rss_direct"
-
-        episode = _resolve_episode(resolved_feed_url, req.episode_title)
+        if req.feed_url:
+            resolved_feed_url = req.feed_url
+            podcast_title_resolved = ""
+            discovery_method = "rss_direct"
+            episode = _resolve_episode(resolved_feed_url, req.episode_title)
+        else:
+            discovery = discover_feed_for_episode(
+                podcast_title=req.podcast_title or "",
+                episode_title=req.episode_title,
+                resolve_episode_fn=_resolve_episode,
+            )
+            resolved_feed_url = str(discovery["feed_url"])
+            podcast_title_resolved = str(discovery.get("podcast_title_resolved") or "")
+            discovery_method = str(discovery.get("discovery_method") or "itunes_search")
+            warnings.extend(discovery.get("warnings") or [])
+            episode = discovery["episode"]
         guid = str(episode.get("guid") or "")
         if not guid:
             raise RuntimeError("Episode GUID missing from resolve output")
@@ -351,8 +363,11 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
             f"- Published: {episode.get('published', '')}\n"
             f"- GUID: {guid}\n"
             f"- Feed: {resolved_feed_url}\n"
+            f"- Discovery Method: {discovery_method}\n"
+            f"- Podcast Resolved: {podcast_title_resolved or 'N/A'}\n"
             f"- Speaker Detection: {'On' if req.include_speakers else 'Off'}\n"
-            f"- Readability Formatting: {'On' if readability_formatted else 'Off'}\n\n"
+            f"- Readability Formatting: {'On' if readability_formatted else 'Off'}\n"
+            f"- Warnings: {'; '.join(warnings) if warnings else 'None'}\n\n"
             f"## Transcript\n\n{transcript_text}\n"
         )
 
