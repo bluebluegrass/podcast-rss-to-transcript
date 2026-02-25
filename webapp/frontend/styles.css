@@ -54,6 +54,33 @@ form {
   gap: 10px;
 }
 
+
+.field-group {
+  display: grid;
+  gap: 6px;
+}
+
+.mode-switch {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0;
+}
+
+.mode-switch legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mode-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  margin: 4px 0;
+}
 label {
   font-weight: 600;
   font-size: 14px;

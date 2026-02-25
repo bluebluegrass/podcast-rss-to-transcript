@@ -10,16 +10,37 @@
     <main class="page">
       <section class="panel hero">
         <h1>Podcast RSS to Transcript</h1>
-        <p>Paste an RSS feed and episode title. Get transcript text directly in the browser.</p>
+        <p>Use RSS URL directly, or search by podcast title and episode title.</p>
       </section>
 
       <section class="panel form-panel">
         <form id="transcribeForm">
-          <label for="feedUrl">RSS Feed URL</label>
-          <input id="feedUrl" name="feedUrl" type="url" required placeholder="https://feeds.example.com/podcast.rss" />
+          <fieldset class="mode-switch">
+            <legend>Input mode</legend>
+            <label class="mode-option" for="modeRss">
+              <input id="modeRss" name="inputMode" type="radio" value="rss" checked />
+              <span>Use RSS Feed URL</span>
+            </label>
+            <label class="mode-option" for="modePodcast">
+              <input id="modePodcast" name="inputMode" type="radio" value="podcast" />
+              <span>Search by Podcast Title</span>
+            </label>
+          </fieldset>
 
-          <label for="episodeTitle">Episode Title</label>
-          <input id="episodeTitle" name="episodeTitle" type="text" required placeholder="Input the Podcast Episode Here" />
+          <div id="feedGroup" class="field-group">
+            <label for="feedUrl">RSS Feed URL</label>
+            <input id="feedUrl" name="feedUrl" type="url" placeholder="https://feeds.example.com/podcast.rss" />
+          </div>
+
+          <div id="podcastGroup" class="field-group hidden">
+            <label for="podcastTitle">Podcast Title</label>
+            <input id="podcastTitle" name="podcastTitle" type="text" placeholder="Input Podcast Show Title Here" />
+          </div>
+
+          <div class="field-group">
+            <label for="episodeTitle">Episode Title</label>
+            <input id="episodeTitle" name="episodeTitle" type="text" required placeholder="Input the Podcast Episode Here" />
+          </div>
 
           <label class="check-row" for="includeSpeakers">
             <input id="includeSpeakers" name="includeSpeakers" type="checkbox" />
