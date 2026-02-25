@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -24,10 +24,19 @@ READABILITY_MODEL = "gpt-4o-mini"
 
 
 class TranscribeRequest(BaseModel):
-    feed_url: str = Field(min_length=10, max_length=2000)
+    feed_url: str | None = Field(default=None, min_length=10, max_length=2000)
+    podcast_title: str | None = Field(default=None, min_length=2, max_length=300)
     episode_title: str = Field(min_length=2, max_length=300)
     include_speakers: bool = False
     format_readable: bool = True
+
+    @model_validator(mode="after")
+    def validate_source_input(self) -> "TranscribeRequest":
+        has_feed = bool(self.feed_url and self.feed_url.strip())
+        has_podcast = bool(self.podcast_title and self.podcast_title.strip())
+        if has_feed == has_podcast:
+            raise ValueError("Provide exactly one of feed_url or podcast_title")
+        return self
 
 
 class TranscribeResponse(BaseModel):
@@ -36,6 +45,10 @@ class TranscribeResponse(BaseModel):
     published: str
     guid: str
     mode: str
+    resolved_feed_url: str
+    podcast_title_resolved: str
+    discovery_method: str
+    warnings: list[str]
     readability_formatted: bool
     transcript_text: str
     transcript_markdown: str
@@ -301,13 +314,21 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
     job_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        episode = _resolve_episode(req.feed_url, req.episode_title)
+        warnings: list[str] = []
+        if not req.feed_url:
+            raise RuntimeError("podcast_title mode is not enabled yet in this build")
+
+        resolved_feed_url = req.feed_url
+        podcast_title_resolved = ""
+        discovery_method = "rss_direct"
+
+        episode = _resolve_episode(resolved_feed_url, req.episode_title)
         guid = str(episode.get("guid") or "")
         if not guid:
             raise RuntimeError("Episode GUID missing from resolve output")
 
         downloaded_audio = job_dir / "episode.raw"
-        _download_episode(req.feed_url, guid, downloaded_audio)
+        _download_episode(resolved_feed_url, guid, downloaded_audio)
 
         normalized_audio = _normalize_audio_for_transcription(
             downloaded_audio,
@@ -329,7 +350,7 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
             f"# {episode.get('title', req.episode_title)}\n\n"
             f"- Published: {episode.get('published', '')}\n"
             f"- GUID: {guid}\n"
-            f"- Feed: {req.feed_url}\n"
+            f"- Feed: {resolved_feed_url}\n"
             f"- Speaker Detection: {'On' if req.include_speakers else 'Off'}\n"
             f"- Readability Formatting: {'On' if readability_formatted else 'Off'}\n\n"
             f"## Transcript\n\n{transcript_text}\n"
@@ -344,6 +365,10 @@ def transcribe(req: TranscribeRequest) -> TranscribeResponse:
             published=str(episode.get("published", "")),
             guid=guid,
             mode="speaker-tagged" if req.include_speakers else "plain-text",
+            resolved_feed_url=resolved_feed_url,
+            podcast_title_resolved=podcast_title_resolved,
+            discovery_method=discovery_method,
+            warnings=warnings,
             readability_formatted=readability_formatted,
             transcript_text=transcript_text,
             transcript_markdown=transcript_markdown,
