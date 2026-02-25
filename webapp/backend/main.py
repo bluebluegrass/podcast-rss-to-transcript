@@ -21,7 +21,9 @@ WEBAPP_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = WEBAPP_ROOT / "frontend"
 OUTPUT_DIR = WEBAPP_ROOT / "output"
 RSS_SCRIPT = REPO_ROOT / "scripts" / "podcast_rss_episode.py"
-TRANSCRIBE_CLI = Path.home() / ".codex" / "skills" / "transcribe" / "scripts" / "transcribe_diarize.py"
+LOCAL_TRANSCRIBE_CLI = REPO_ROOT / "scripts" / "transcribe_diarize.py"
+SKILL_TRANSCRIBE_CLI = Path.home() / ".codex" / "skills" / "transcribe" / "scripts" / "transcribe_diarize.py"
+TRANSCRIBE_CLI = LOCAL_TRANSCRIBE_CLI if LOCAL_TRANSCRIBE_CLI.exists() else SKILL_TRANSCRIBE_CLI
 READABILITY_MODEL = "gpt-4o-mini"
 
 
