@@ -91,7 +91,7 @@ python3 scripts/podcast_rss_episode.py download \
 Transcribe:
 
 ```bash
-python3 "$HOME/.codex/skills/transcribe/scripts/transcribe_diarize.py" \
+python3 "scripts/transcribe_diarize.py" \
   "output/podcast-audio/episode.mp3" \
   --response-format text \
   --out "output/transcribe/episode.md"
@@ -102,7 +102,7 @@ python3 "$HOME/.codex/skills/transcribe/scripts/transcribe_diarize.py" \
 Use diarization when you need speaker tags:
 
 ```bash
-python3 "$HOME/.codex/skills/transcribe/scripts/transcribe_diarize.py" \
+python3 "scripts/transcribe_diarize.py" \
   "output/podcast-audio/episode.mp3" \
   --model gpt-4o-transcribe-diarize \
   --response-format diarized_json \
@@ -118,10 +118,12 @@ python3 "$HOME/.codex/skills/transcribe/scripts/transcribe_diarize.py" \
 
 ## Web app mode
 
-The repository also includes a simple web app in `webapp/`.
+The repository also includes a web app in `webapp/`.
 
 - Mode 1: input RSS feed URL + episode title
 - Mode 2: input podcast title + episode title (backend feed discovery via iTunes search + cache)
+- Async jobs for long episodes (create, poll, download)
+- Automatic chunking/retry pipeline for large audio uploads
 
 See `webapp/README.md` for run instructions and API details.
 

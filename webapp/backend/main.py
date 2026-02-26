@@ -7,7 +7,8 @@ import shutil
 import sqlite3
 import subprocess
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 from uuid import uuid4
@@ -35,6 +36,14 @@ STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
+
+# OpenAI audio upload limit is ~25MB; keep headroom for robustness.
+MAX_TRANSCRIBE_BYTES = int(os.getenv("MAX_TRANSCRIBE_BYTES", str(24 * 1024 * 1024)))
+DEFAULT_CHUNK_SECONDS = int(os.getenv("TRANSCRIBE_CHUNK_SECONDS", "600"))
+MAX_EPISODE_DURATION_SECONDS = int(os.getenv("MAX_EPISODE_DURATION_SECONDS", str(3 * 60 * 60)))
+MAX_NORMALIZED_AUDIO_BYTES = int(os.getenv("MAX_NORMALIZED_AUDIO_BYTES", str(1024 * 1024 * 1024)))
+CHUNK_TRANSCRIBE_RETRIES = int(os.getenv("CHUNK_TRANSCRIBE_RETRIES", "4"))
+JOB_RETENTION_DAYS = int(os.getenv("JOB_RETENTION_DAYS", "7"))
 
 
 class TranscribeRequest(BaseModel):
@@ -67,6 +76,9 @@ class TranscribeResponse(BaseModel):
     transcript_text: str
     transcript_markdown: str
     suggested_filename: str
+    audio_duration_seconds: float | None = None
+    chunk_count: int = 1
+    chunk_seconds: int = DEFAULT_CHUNK_SECONDS
 
 
 class JobCreateResponse(BaseModel):
@@ -87,7 +99,7 @@ class JobStatusResponse(BaseModel):
     result: TranscribeResponse | None
 
 
-app = FastAPI(title="Podcast RSS Transcript App", version="1.3.0")
+app = FastAPI(title="Podcast RSS Transcript App", version="1.4.0")
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 _job_queue: queue.Queue[str] = queue.Queue()
@@ -192,6 +204,64 @@ def _get_job_row(job_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def _recover_stale_jobs() -> int:
+    now = _utcnow()
+    with _db_lock:
+        with _db_connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM jobs WHERE status IN (?, ?)",
+                (STATUS_QUEUED, STATUS_RUNNING),
+            ).fetchall()
+            recovered = len(rows)
+            if recovered:
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = ?,
+                        progress_stage = ?,
+                        progress_percent = ?,
+                        error_text = ?,
+                        updated_at = ?
+                    WHERE status IN (?, ?)
+                    """,
+                    (
+                        STATUS_FAILED,
+                        "Failed",
+                        100,
+                        "Job interrupted by service restart. Please submit again.",
+                        now,
+                        STATUS_QUEUED,
+                        STATUS_RUNNING,
+                    ),
+                )
+                conn.commit()
+    return recovered
+
+
+def _cleanup_old_jobs() -> int:
+    if JOB_RETENTION_DAYS <= 0:
+        return 0
+
+    cutoff = (datetime.utcnow() - timedelta(days=JOB_RETENTION_DAYS)).isoformat(timespec="seconds") + "Z"
+    deleted_ids: list[str] = []
+
+    with _db_lock:
+        with _db_connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM jobs WHERE status IN (?, ?) AND updated_at < ?",
+                (STATUS_COMPLETED, STATUS_FAILED, cutoff),
+            ).fetchall()
+            deleted_ids = [str(row["id"]) for row in rows]
+            if deleted_ids:
+                conn.executemany("DELETE FROM jobs WHERE id = ?", [(jid,) for jid in deleted_ids])
+                conn.commit()
+
+    for job_id in deleted_ids:
+        shutil.rmtree(OUTPUT_DIR / job_id, ignore_errors=True)
+
+    return len(deleted_ids)
+
+
 def _set_active_job_id(job_id: str | None) -> None:
     global _active_job_id
     with _active_job_lock:
@@ -218,6 +288,8 @@ def _validate_runtime_dependencies() -> None:
         raise HTTPException(status_code=500, detail=f"Transcribe CLI not found: {TRANSCRIBE_CLI}")
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=400, detail="OPENAI_API_KEY is not set on server")
+    if not shutil.which("ffmpeg"):
+        raise HTTPException(status_code=500, detail="ffmpeg is not installed on server")
 
 
 def _run_command(cmd: list[str], timeout_seconds: int = 1800) -> str:
@@ -369,7 +441,7 @@ def _download_episode(feed_url: str, guid: str, audio_out: Path) -> None:
             "--out",
             str(audio_out),
         ],
-        timeout_seconds=600,
+        timeout_seconds=900,
     )
 
 
@@ -378,7 +450,7 @@ def _normalize_audio_for_transcription(input_audio: Path, output_audio: Path) ->
     if not ffmpeg:
         return input_audio
 
-    # Normalize container/codec so upstream transcription API gets a predictable audio stream.
+    # Normalize to predictable audio stream and lower bitrate, reducing chunk size variability.
     _run_command(
         [
             ffmpeg,
@@ -397,13 +469,43 @@ def _normalize_audio_for_transcription(input_audio: Path, output_audio: Path) ->
             "64k",
             str(output_audio),
         ],
-        timeout_seconds=900,
+        timeout_seconds=1800,
     )
 
     if not output_audio.exists() or output_audio.stat().st_size == 0:
         raise RuntimeError("Audio normalization failed: generated file is empty")
 
+    if output_audio.stat().st_size > MAX_NORMALIZED_AUDIO_BYTES:
+        raise RuntimeError("Audio file is too large after normalization")
+
     return output_audio
+
+
+def _probe_audio_duration_seconds(audio_path: Path) -> float | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+
+    try:
+        raw = _run_command(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(audio_path),
+            ],
+            timeout_seconds=60,
+        )
+        value = float(raw.strip())
+        if value <= 0:
+            return None
+        return value
+    except Exception:
+        return None
 
 
 def _transcribe_audio(audio_path: Path, out_path: Path, include_speakers: bool) -> str:
@@ -419,18 +521,191 @@ def _transcribe_audio(audio_path: Path, out_path: Path, include_speakers: bool) 
     if include_speakers:
         cmd.extend(["--model", "gpt-4o-transcribe-diarize"])
 
-    try:
-        _run_command(cmd, timeout_seconds=2400)
-    except RuntimeError as exc:
-        msg = str(exc)
-        if "Audio file might be corrupted or unsupported" in msg:
-            raise RuntimeError(
-                "Downloaded audio could not be decoded by transcription API. "
-                "Try another episode/feed, or disable speaker detection."
-            ) from exc
-        raise
-
+    _run_command(cmd, timeout_seconds=2700)
     return out_path.read_text(encoding="utf-8")
+
+
+def _is_retryable_error(message: str) -> bool:
+    lowered = message.lower()
+    indicators = (
+        "rate limit",
+        "timeout",
+        "timed out",
+        "temporarily",
+        "connection reset",
+        "connection aborted",
+        "internal server error",
+        "502",
+        "503",
+        "504",
+        "api_connection_error",
+    )
+    return any(token in lowered for token in indicators)
+
+
+def _transcribe_audio_with_retry(audio_path: Path, out_path: Path, include_speakers: bool) -> str:
+    if out_path.exists() and out_path.stat().st_size > 0:
+        return out_path.read_text(encoding="utf-8")
+
+    attempt = 1
+    while True:
+        try:
+            return _transcribe_audio(audio_path, out_path, include_speakers)
+        except Exception as exc:
+            message = str(exc)
+            if "Audio file might be corrupted or unsupported" in message:
+                raise RuntimeError(
+                    "Downloaded audio could not be decoded by transcription API. "
+                    "Try another episode/feed, or disable speaker detection."
+                ) from exc
+
+            if attempt >= CHUNK_TRANSCRIBE_RETRIES or not _is_retryable_error(message):
+                raise RuntimeError(message) from exc
+
+            delay = min(30, 2**attempt)
+            time.sleep(delay)
+            attempt += 1
+
+
+def _split_audio_into_chunks(normalized_audio: Path, chunks_dir: Path) -> list[Path]:
+    if normalized_audio.stat().st_size <= MAX_TRANSCRIBE_BYTES:
+        return [normalized_audio]
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is required to split long audio")
+
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    pattern = chunks_dir / "chunk_%04d.mp3"
+
+    def segment_command(copy_codec: bool) -> list[str]:
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(normalized_audio),
+            "-f",
+            "segment",
+            "-segment_time",
+            str(DEFAULT_CHUNK_SECONDS),
+            "-reset_timestamps",
+            "1",
+        ]
+        if copy_codec:
+            cmd.extend(["-c", "copy"])
+        else:
+            cmd.extend(["-ac", "1", "-ar", "16000", "-codec:a", "libmp3lame", "-b:a", "64k"])
+        cmd.append(str(pattern))
+        return cmd
+
+    # First try stream copy for speed; fallback to re-encode segmentation.
+    try:
+        _run_command(segment_command(copy_codec=True), timeout_seconds=1800)
+    except Exception:
+        for existing in chunks_dir.glob("chunk_*.mp3"):
+            existing.unlink(missing_ok=True)
+        _run_command(segment_command(copy_codec=False), timeout_seconds=2400)
+
+    chunks = sorted(chunks_dir.glob("chunk_*.mp3"))
+    if not chunks:
+        raise RuntimeError("Failed to split long audio into chunks")
+
+    oversized = [chunk for chunk in chunks if chunk.stat().st_size > MAX_TRANSCRIBE_BYTES]
+    if oversized:
+        raise RuntimeError("Generated audio chunk exceeds API upload limit; reduce chunk duration")
+
+    return chunks
+
+
+def _drop_boundary_overlap(prev_text: str, next_text: str) -> str:
+    prev_words = prev_text.split()
+    next_words = next_text.split()
+    if not prev_words or not next_words:
+        return next_text
+
+    max_overlap = min(45, len(prev_words), len(next_words))
+    for overlap in range(max_overlap, 7, -1):
+        tail = " ".join(prev_words[-overlap:]).casefold()
+        head = " ".join(next_words[:overlap]).casefold()
+        if tail == head:
+            return " ".join(next_words[overlap:]).strip()
+
+    return next_text
+
+
+def _merge_plain_text_chunks(chunk_texts: list[str]) -> str:
+    merged: list[str] = []
+    for text in chunk_texts:
+        cleaned = " ".join(text.strip().split())
+        if not cleaned:
+            continue
+        if not merged:
+            merged.append(cleaned)
+            continue
+
+        trimmed = _drop_boundary_overlap(merged[-1], cleaned)
+        if trimmed:
+            merged.append(trimmed)
+
+    return "\n\n".join(merged).strip()
+
+
+def _merge_chunk_outputs(raw_parts: list[str], include_speakers: bool) -> str:
+    if include_speakers:
+        turns = [_format_diarized_json(raw).strip() for raw in raw_parts if raw.strip()]
+        return "\n\n".join([t for t in turns if t]).strip()
+
+    return _merge_plain_text_chunks(raw_parts)
+
+
+def _transcribe_long_audio(
+    normalized_audio: Path,
+    job_dir: Path,
+    include_speakers: bool,
+    progress_callback: Callable[[str, int], None],
+) -> tuple[str, int, float | None, list[str]]:
+    duration_seconds = _probe_audio_duration_seconds(normalized_audio)
+    warnings: list[str] = []
+
+    if duration_seconds and duration_seconds > MAX_EPISODE_DURATION_SECONDS:
+        raise RuntimeError(
+            f"Episode too long ({int(duration_seconds // 60)} min). "
+            f"Current limit is {int(MAX_EPISODE_DURATION_SECONDS // 60)} min."
+        )
+
+    progress_callback("Preparing audio chunks", 50)
+    chunks_dir = job_dir / "chunks"
+    chunk_files = _split_audio_into_chunks(normalized_audio, chunks_dir)
+
+    if len(chunk_files) > 1 and include_speakers:
+        warnings.append("Long-audio speaker labels are best-effort and may reset between chunks.")
+
+    chunk_outputs_dir = job_dir / "chunk_transcripts"
+    chunk_outputs_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_parts: list[str] = []
+    total_chunks = len(chunk_files)
+
+    for index, chunk_path in enumerate(chunk_files, start=1):
+        progress_start = 56
+        progress_end = 86
+        pct = progress_start + int(((index - 1) / max(1, total_chunks)) * (progress_end - progress_start))
+        progress_callback(f"Transcribing chunk {index}/{total_chunks}", pct)
+
+        out_suffix = "json" if include_speakers else "txt"
+        chunk_out = chunk_outputs_dir / f"chunk_{index:04d}.{out_suffix}"
+        raw = _transcribe_audio_with_retry(chunk_path, chunk_out, include_speakers)
+        raw_parts.append(raw)
+
+    progress_callback("Stitching chunks", 88)
+    transcript_text = _merge_chunk_outputs(raw_parts, include_speakers)
+
+    if not transcript_text.strip():
+        raise RuntimeError("Transcript generation returned empty output")
+
+    return transcript_text, total_chunks, duration_seconds, warnings
 
 
 def _to_user_error_message(exc: Exception) -> str:
@@ -449,6 +724,9 @@ def _to_user_error_message(exc: Exception) -> str:
 
     if "Provide exactly one of feed_url or podcast_title" in raw:
         return "Provide either RSS feed URL or podcast title (not both)."
+
+    if "Episode too long" in raw:
+        return raw
 
     if "Traceback" in raw:
         lines = [line.strip() for line in raw.splitlines() if line.strip()]
@@ -499,28 +777,36 @@ def _run_transcription_pipeline(
         raise RuntimeError("Episode GUID missing from resolve output")
 
     downloaded_audio = job_dir / "episode.raw"
-    progress("Downloading audio", 28)
+    progress("Downloading audio", 24)
     _download_episode(resolved_feed_url, guid, downloaded_audio)
 
-    progress("Normalizing audio", 42)
+    progress("Normalizing audio", 40)
     normalized_audio = _normalize_audio_for_transcription(
         downloaded_audio,
         job_dir / "episode.normalized.mp3",
     )
 
-    raw_transcript_path = job_dir / ("transcript.diarized.json" if req.include_speakers else "transcript.txt")
-    progress("Transcribing audio", 70)
-    raw_content = _transcribe_audio(normalized_audio, raw_transcript_path, req.include_speakers)
+    transcript_text, chunk_count, duration_seconds, chunk_warnings = _transcribe_long_audio(
+        normalized_audio,
+        job_dir,
+        req.include_speakers,
+        progress_callback=progress,
+    )
+    warnings.extend(chunk_warnings)
 
-    transcript_text = _format_diarized_json(raw_content) if req.include_speakers else raw_content.strip()
     readability_formatted = False
-
     if req.format_readable:
-        progress("Formatting transcript", 88)
+        progress("Formatting transcript", 93)
         transcript_text, readability_formatted = _format_transcript_readable(
             transcript_text,
             req.include_speakers,
         )
+
+    duration_label = (
+        f"{duration_seconds:.1f} seconds"
+        if isinstance(duration_seconds, (int, float)) and duration_seconds > 0
+        else "N/A"
+    )
 
     transcript_markdown = (
         f"# {episode.get('title', req.episode_title)}\n\n"
@@ -531,6 +817,9 @@ def _run_transcription_pipeline(
         f"- Podcast Resolved: {podcast_title_resolved or 'N/A'}\n"
         f"- Speaker Detection: {'On' if req.include_speakers else 'Off'}\n"
         f"- Readability Formatting: {'On' if readability_formatted else 'Off'}\n"
+        f"- Audio Duration: {duration_label}\n"
+        f"- Chunk Size (sec): {DEFAULT_CHUNK_SECONDS}\n"
+        f"- Chunk Count: {chunk_count}\n"
         f"- Warnings: {'; '.join(warnings) if warnings else 'None'}\n\n"
         f"## Transcript\n\n{transcript_text}\n"
     )
@@ -554,6 +843,9 @@ def _run_transcription_pipeline(
         transcript_text=transcript_text,
         transcript_markdown=transcript_markdown,
         suggested_filename=suggested_filename,
+        audio_duration_seconds=(float(duration_seconds) if duration_seconds is not None else None),
+        chunk_count=chunk_count,
+        chunk_seconds=DEFAULT_CHUNK_SECONDS,
     )
 
 
@@ -632,6 +924,8 @@ def _row_to_job_status(row: dict) -> JobStatusResponse:
 @app.on_event("startup")
 def _on_startup() -> None:
     _init_jobs_db()
+    _recover_stale_jobs()
+    _cleanup_old_jobs()
     _ensure_worker_started()
 
 
@@ -644,10 +938,15 @@ def health() -> dict:
         "openai_key_set": bool(os.getenv("OPENAI_API_KEY")),
         "readability_model": READABILITY_MODEL,
         "ffmpeg_exists": bool(shutil.which("ffmpeg")),
+        "ffprobe_exists": bool(shutil.which("ffprobe")),
         "discovery_provider": "itunes_search_with_cache",
         "worker_alive": bool(_worker_thread and _worker_thread.is_alive()),
         "queued_jobs": _job_queue.qsize(),
         "active_job_id": _get_active_job_id(),
+        "chunk_seconds": DEFAULT_CHUNK_SECONDS,
+        "max_episode_seconds": MAX_EPISODE_DURATION_SECONDS,
+        "chunk_retry_attempts": CHUNK_TRANSCRIBE_RETRIES,
+        "job_retention_days": JOB_RETENTION_DAYS,
     }
 
 

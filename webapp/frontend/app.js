@@ -63,6 +63,10 @@ function renderResult(data) {
     ? data.warnings.join(' | ')
     : 'none';
 
+  const durationText = Number.isFinite(data.audio_duration_seconds)
+    ? `${Math.round(data.audio_duration_seconds)}s`
+    : 'N/A';
+
   metaEl.textContent = [
     `Mode: ${data.mode}`,
     `Readable: ${data.readability_formatted ? 'yes' : 'no'}`,
@@ -71,6 +75,8 @@ function renderResult(data) {
     `Resolved feed: ${data.resolved_feed_url || 'N/A'}`,
     `Podcast resolved: ${data.podcast_title_resolved || 'N/A'}`,
     `GUID: ${data.guid}`,
+    `Duration: ${durationText}`,
+    `Chunks: ${data.chunk_count || 1} @ ${data.chunk_seconds || 0}s`,
     `Warnings: ${warningsText}`,
   ].join(' | ');
 

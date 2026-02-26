@@ -1,14 +1,16 @@
-# Web App (MVP)
+# Web App
 
-Simple web interface for RSS-to-transcript with two input modes.
+Simple web interface for podcast transcription with long-audio reliability.
 
 ## Features
 
 - Input by `RSS Feed URL + Episode Title`
 - Input by `Podcast Title + Episode Title` (backend feed discovery)
-- Generate transcript directly in browser
-- Optional speaker detection mode (diarized -> speaker-tagged text)
-- Optional readability formatting pass
+- Async jobs (`create -> poll -> download`) for long episodes
+- Chunked transcription for large audio (auto split)
+- Retry per chunk for transient API/network failures
+- Optional speaker detection
+- Optional readability formatting
 - Copy all transcript content
 - Download transcript as `.md`
 
@@ -22,24 +24,38 @@ source ~/.zshrc
 uvicorn webapp.backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Open:
+Open: [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
-- http://127.0.0.1:8000
+## Environment
 
-## Environment requirements
+Required:
 
-- `OPENAI_API_KEY` set in the shell that starts `uvicorn`
-- Existing scripts available:
-  - `scripts/podcast_rss_episode.py`
-  - `~/.codex/skills/transcribe/scripts/transcribe_diarize.py`
-- `ffmpeg` recommended for robust audio normalization
+- `OPENAI_API_KEY`
+- `ffmpeg` (normalization + chunking)
+- `scripts/podcast_rss_episode.py`
+- `scripts/transcribe_diarize.py`
+
+Optional tuning env vars:
+
+- `TRANSCRIBE_CHUNK_SECONDS` (default `600`)
+- `MAX_EPISODE_DURATION_SECONDS` (default `10800`)
+- `CHUNK_TRANSCRIBE_RETRIES` (default `4`)
+- `JOB_RETENTION_DAYS` (default `7`)
 
 ## API
 
 - `GET /api/health`
+- `POST /api/jobs`
+- `GET /api/jobs/{job_id}`
+- `GET /api/jobs/{job_id}/download`
+
+Backward compatible endpoint (synchronous):
+
 - `POST /api/transcribe`
 
-### Request mode A (direct RSS)
+## Request payload
+
+Provide exactly one of `feed_url` or `podcast_title`:
 
 ```json
 {
@@ -50,7 +66,7 @@ Open:
 }
 ```
 
-### Request mode B (podcast-title discovery)
+or
 
 ```json
 {
@@ -60,15 +76,3 @@ Open:
   "format_readable": true
 }
 ```
-
-Rules:
-
-- Provide exactly one of `feed_url` or `podcast_title`
-- `episode_title` is always required
-
-Response includes:
-
-- `resolved_feed_url`
-- `podcast_title_resolved`
-- `discovery_method` (`rss_direct`, `itunes_search`, or `cache`)
-- `warnings` for low-confidence title matches
