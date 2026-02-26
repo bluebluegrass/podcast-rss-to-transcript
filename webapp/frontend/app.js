@@ -18,6 +18,7 @@ const episodeTitleInput = document.getElementById('episodeTitle');
 
 let latestMarkdown = '';
 let latestFilename = 'transcript.md';
+let latestJobId = '';
 
 function setStatus(message, type = 'info') {
   statusEl.textContent = message;
@@ -26,7 +27,7 @@ function setStatus(message, type = 'info') {
 
 function setLoading(loading) {
   submitBtn.disabled = loading;
-  submitBtn.textContent = loading ? 'Working...' : 'Generate Transcript';
+  submitBtn.textContent = loading ? 'Job Running...' : 'Generate Transcript';
 }
 
 function currentMode() {
@@ -47,6 +48,81 @@ function applyModeVisibility() {
   podcastGroup.classList.remove('hidden');
   feedUrlInput.required = false;
   podcastTitleInput.required = true;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function renderResult(data) {
+  latestMarkdown = data.transcript_markdown;
+  latestFilename = data.suggested_filename || 'transcript.md';
+
+  resultTitle.textContent = data.episode_title || 'Transcript';
+  const warningsText = Array.isArray(data.warnings) && data.warnings.length
+    ? data.warnings.join(' | ')
+    : 'none';
+
+  metaEl.textContent = [
+    `Mode: ${data.mode}`,
+    `Readable: ${data.readability_formatted ? 'yes' : 'no'}`,
+    `Published: ${data.published || 'N/A'}`,
+    `Discovery: ${data.discovery_method || 'N/A'}`,
+    `Resolved feed: ${data.resolved_feed_url || 'N/A'}`,
+    `Podcast resolved: ${data.podcast_title_resolved || 'N/A'}`,
+    `GUID: ${data.guid}`,
+    `Warnings: ${warningsText}`,
+  ].join(' | ');
+
+  transcriptOutput.value = data.transcript_markdown;
+  resultSection.classList.remove('hidden');
+}
+
+async function createJob(payload) {
+  const res = await fetch('/api/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || 'Failed to create transcription job');
+  }
+
+  return data;
+}
+
+async function pollJob(jobId) {
+  while (true) {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.detail || 'Failed to fetch job status');
+    }
+
+    const progress = Number.isFinite(data.progress_percent)
+      ? ` (${data.progress_percent}%)`
+      : '';
+
+    if (data.status === 'queued') {
+      setStatus(`Queued: ${data.progress_stage || 'Waiting for worker'}${progress}`, 'info');
+    } else if (data.status === 'running') {
+      setStatus(`${data.progress_stage || 'Processing'}${progress}`, 'info');
+    } else if (data.status === 'failed') {
+      throw new Error(data.error || 'Transcription job failed');
+    } else if (data.status === 'completed') {
+      if (!data.result) {
+        throw new Error('Job completed but transcript payload is missing');
+      }
+      renderResult(data.result);
+      setStatus('Transcript generated successfully.', 'success');
+      return;
+    }
+
+    await sleep(2000);
+  }
 }
 
 modeRss.addEventListener('change', applyModeVisibility);
@@ -78,16 +154,11 @@ form.addEventListener('submit', async (e) => {
     return;
   }
 
-  const stageBase = mode === 'podcast'
-    ? 'Searching podcast feed, resolving episode, downloading audio, and transcribing...'
-    : 'Resolving episode, downloading audio, and transcribing...';
-
-  const stage = formatReadable
-    ? `${stageBase} Then formatting for readability...`
-    : stageBase;
-
   setLoading(true);
-  setStatus(stage, 'info');
+  resultSection.classList.add('hidden');
+  latestMarkdown = '';
+  latestFilename = 'transcript.md';
+  latestJobId = '';
 
   try {
     const payload = {
@@ -102,40 +173,11 @@ form.addEventListener('submit', async (e) => {
       payload.podcast_title = podcastTitle;
     }
 
-    const res = await fetch('/api/transcribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const created = await createJob(payload);
+    latestJobId = created.job_id;
+    setStatus(`Job queued (${latestJobId}). Starting soon...`, 'info');
 
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.detail || 'Failed to generate transcript');
-    }
-
-    latestMarkdown = data.transcript_markdown;
-    latestFilename = data.suggested_filename || 'transcript.md';
-
-    resultTitle.textContent = data.episode_title || 'Transcript';
-    const warningsText = Array.isArray(data.warnings) && data.warnings.length
-      ? data.warnings.join(' | ')
-      : 'none';
-
-    metaEl.textContent = [
-      `Mode: ${data.mode}`,
-      `Readable: ${data.readability_formatted ? 'yes' : 'no'}`,
-      `Published: ${data.published || 'N/A'}`,
-      `Discovery: ${data.discovery_method || 'N/A'}`,
-      `Resolved feed: ${data.resolved_feed_url || 'N/A'}`,
-      `Podcast resolved: ${data.podcast_title_resolved || 'N/A'}`,
-      `GUID: ${data.guid}`,
-      `Warnings: ${warningsText}`,
-    ].join(' | ');
-
-    transcriptOutput.value = data.transcript_markdown;
-
-    resultSection.classList.remove('hidden');
-    setStatus('Transcript generated successfully.', 'success');
+    await pollJob(latestJobId);
   } catch (err) {
     setStatus(`Error: ${err.message}`, 'error');
   } finally {
@@ -157,18 +199,30 @@ copyBtn.addEventListener('click', async () => {
 });
 
 downloadBtn.addEventListener('click', () => {
-  if (!latestMarkdown) {
-    setStatus('No transcript available to download.', 'error');
+  if (!latestJobId) {
+    if (!latestMarkdown) {
+      setStatus('No transcript available to download.', 'error');
+      return;
+    }
+
+    const blob = new Blob([latestMarkdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = latestFilename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus('Downloaded transcript file.', 'success');
     return;
   }
-  const blob = new Blob([latestMarkdown], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
+
   const a = document.createElement('a');
-  a.href = url;
+  a.href = `/api/jobs/${encodeURIComponent(latestJobId)}/download`;
   a.download = latestFilename;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
-  setStatus('Downloaded transcript file.', 'success');
+  setStatus('Downloading transcript file.', 'success');
 });
